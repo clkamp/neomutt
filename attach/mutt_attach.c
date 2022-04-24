@@ -449,6 +449,109 @@ static void save_cid_attachments(struct Body *body, struct CidMapList *cid_map_l
 }
 
 /**
+ * map_cid_to_filename - Replace Content-IDs with filenames
+ * @param filename     Path to file to replace Content-IDs with filenames
+ * @param cid_map_list List of Content-ID to filename mappings
+ */
+static void map_cid_to_filename(struct Buffer *filename, struct CidMapList *cid_map_list)
+{
+  if (!filename || !cid_map_list)
+    return;
+
+  FILE *fp_out = NULL;
+  char *pbuf = NULL;
+  char *searchbuf = NULL;
+  char *buf = NULL;
+  char *cid = NULL;
+  size_t blen = 0;
+  struct CidMap *cid_map = NULL;
+
+  struct Buffer *tmpfile = mutt_buffer_pool_get();
+  struct Buffer *tmpbuf = mutt_buffer_pool_get();
+
+  FILE *fp_in = mutt_file_fopen(mutt_buffer_string(filename), "r");
+  if (!fp_in)
+    goto bail;
+
+  mutt_buffer_mktemp(tmpfile);
+  fp_out = mutt_file_fopen(mutt_buffer_string(tmpfile), "w+");
+  if (!fp_out)
+    goto bail;
+
+  /* Read in lines from filename in buf */
+  while ((buf = mutt_file_read_line(buf, &blen, fp_in, NULL, MUTT_RL_NO_FLAGS)) != NULL)
+  {
+    if (mutt_str_len(buf) == 0)
+    {
+      fputs(buf, fp_out);
+      continue;
+    }
+
+    /* copy buf to searchbuf because we need to edit multiple times */
+    searchbuf = strdup(buf);
+    mutt_buffer_reset(tmpbuf);
+
+    /* loop through Content-ID to filename mappings and do search and replace */
+    STAILQ_FOREACH(cid_map, cid_map_list, entries)
+    {
+      pbuf = searchbuf;
+      while ((cid = strstr(pbuf, cid_map->cid)) != NULL)
+      {
+        mutt_buffer_addstr_n(tmpbuf, pbuf, cid - pbuf);
+        mutt_buffer_addstr(tmpbuf, cid_map->fname);
+        pbuf = cid + mutt_str_len(cid_map->cid);
+      }
+      mutt_buffer_addstr(tmpbuf, pbuf);
+      FREE(&searchbuf);
+      searchbuf = mutt_buffer_strdup(tmpbuf);
+      mutt_buffer_reset(tmpbuf);
+    }
+
+    /* write edited line to output file */
+    fputs(searchbuf, fp_out);
+    fputs("\n", fp_out);
+    FREE(&searchbuf);
+  }
+
+  FREE(&buf);
+  mutt_file_fclose(&fp_in);
+  mutt_file_fclose(&fp_out);
+  mutt_file_set_mtime(mutt_buffer_string(filename), mutt_buffer_string(tmpfile));
+
+  /* copy new file over old file */
+  fp_in = mutt_file_fopen(mutt_buffer_string(tmpfile), "r");
+  if (!fp_in)
+    goto bail;
+
+  if ((truncate(mutt_buffer_string(filename), 0) == -1) ||
+      ((fp_out = mutt_file_fopen(mutt_buffer_string(filename), "a")) == NULL))
+  {
+    mutt_perror(mutt_buffer_string(filename));
+    goto bail;
+  }
+
+  mutt_file_copy_stream(fp_in, fp_out);
+  mutt_file_set_mtime(mutt_buffer_string(tmpfile), mutt_buffer_string(filename));
+  unlink(mutt_buffer_string(tmpfile));
+
+bail:
+
+  mutt_buffer_pool_release(&tmpfile);
+  mutt_buffer_pool_release(&tmpbuf);
+
+  /* free Content-ID to filename mapping list */
+  while (!STAILQ_EMPTY(cid_map_list))
+  {
+    cid_map = STAILQ_FIRST(cid_map_list);
+    printf("%s, %s\n", cid_map->cid, cid_map->fname);
+    STAILQ_REMOVE_HEAD(cid_map_list, entries);
+    FREE(&cid_map->cid);
+    FREE(&cid_map->fname);
+    FREE(&cid_map);
+  }
+}
+
+/**
  * wait_interactive_filter - Wait after an interactive filter
  * @param pid Process id of the process to wait for
  * @retval num Exit status of the process identified by pid
