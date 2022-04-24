@@ -103,6 +103,38 @@ bool attach_body_parent(struct Body *start, struct Body *start_parent,
 }
 
 /**
+ * attach_body_ancestor - Find the ancestor of a body with specified subtype
+ * @param[in]  start         Body to start search from
+ * @param[in]  body          Body to find ancestor of
+ * @param[in]  subtype       Mime subtype of ancestor to find
+ * @param[out] body_ancestor Body ancestor if found
+ * @retval     true          Ancestor body found
+ * @retval     false         Ancestor body not found
+ */
+bool attach_body_ancestor(struct Body *start, struct Body *body,
+                          const char *subtype, struct Body **body_ancestor)
+{
+  if (!start || !body)
+    return false;
+
+  struct Body *b = body;
+  struct Body *b_parent = NULL;
+
+  while (attach_body_parent(start, NULL, b, &b_parent))
+  {
+    if (mutt_str_equal(subtype, b_parent->subtype))
+    {
+      *body_ancestor = b_parent;
+      return true;
+    }
+    b = b_parent;
+  }
+
+  *body_ancestor = NULL;
+  return false;
+}
+
+/**
  * attach_body_previous - Find the previous body of a body
  * @param[in]  start    Body to start search from
  * @param[in]  body     Body to find previous body of

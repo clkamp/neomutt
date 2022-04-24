@@ -53,6 +53,8 @@ struct Body;
 int  attach_body_count   (struct Body *body, bool recurse);
 bool attach_body_parent  (struct Body *start, struct Body *start_parent,
                           struct Body *body, struct Body **body_parent);
+bool attach_body_ancestor(struct Body *start, struct Body *body,
+                          const char *subtype, struct Body **body_ancestor);
 bool attach_body_previous(struct Body *start, struct Body *body,
                           struct Body **previous);
 
