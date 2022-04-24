@@ -37,6 +37,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "mutt/lib.h"
+#include "attach/lib.h"
 #include "config/lib.h"
 #include "email/lib.h"
 #include "core/lib.h"
@@ -610,6 +611,10 @@ int mutt_view_attachment(FILE *fp, struct Body *a, enum ViewAttachMode mode,
   int rc = -1;
   bool has_tempfile = false;
   bool unlink_pagerfile = false;
+  struct Body *related_ancestor = NULL;
+  bool has_related = false;
+  struct CidMapList cid_map_list;
+  STAILQ_INIT(&cid_map_list);
 
   bool is_message = mutt_is_message_type(a->type, a->subtype);
   if ((WithCrypto != 0) && is_message && a->email &&
@@ -626,6 +631,17 @@ int mutt_view_attachment(FILE *fp, struct Body *a, enum ViewAttachMode mode,
                  ((mode == MUTT_VA_REGULAR) && mutt_needs_mailcap(a)) ||
                  (mode == MUTT_VA_PAGER));
   snprintf(type, sizeof(type), "%s/%s", TYPE(a), a->subtype);
+
+  /* check for multipart/related and save out attachments with a Content-ID */
+  if (mutt_str_equal(type, "text/html"))
+  {
+    if ((WithCrypto != 0) && (e->security & SEC_ENCRYPT))
+      has_related = attach_body_ancestor(actx->body_idx[0], a, "related", &related_ancestor);
+    else
+      has_related = attach_body_ancestor(e->body, a, "related", &related_ancestor);
+    if (has_related)
+      save_cid_attachments(related_ancestor->parts, &cid_map_list);
+  }
 
   char columns[16];
   snprintf(columns, sizeof(columns), "%d", win->state.cols);
@@ -671,6 +687,10 @@ int mutt_view_attachment(FILE *fp, struct Body *a, enum ViewAttachMode mode,
     has_tempfile = true;
 
     mutt_rfc3676_space_unstuff_attachment(a, mutt_buffer_string(tmpfile));
+
+    /* replace Content-IDs with filenames */
+    if (has_related)
+      map_cid_to_filename(tmpfile, &cid_map_list);
 
     use_pipe = mailcap_expand_command(a, mutt_buffer_string(tmpfile), type, cmd);
     use_pager = entry->copiousoutput;
