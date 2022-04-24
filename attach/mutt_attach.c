@@ -59,6 +59,17 @@
 #endif
 
 /**
+ * struct CidMap - List of Content-ID to filename mappings
+ */
+struct CidMap
+{
+  char *cid;                    ///< Content-ID
+  char *fname;                  ///< Filename
+  STAILQ_ENTRY(CidMap) entries; ///< Linked list
+};
+STAILQ_HEAD(CidMapList, CidMap);
+
+/**
  * mutt_get_tmp_attachment - Get a temporary copy of an attachment
  * @param a Attachment to copy
  * @retval  0 Success
@@ -363,6 +374,77 @@ void mutt_check_lookup_list(struct Body *b, char *type, size_t len)
       FREE(&tmp.subtype);
       FREE(&tmp.xtype);
     }
+  }
+}
+
+/**
+ * save_cid_attachment - Save attachment if it has a Content-ID
+ * @param[in]  body         Body to check and save
+ * @param[out] cid_map_list List of Content-ID to filename mappings
+ *
+ * If body has a Content-ID, it is saved to disk and a new Content-ID to filename
+ * mapping is added to cid_map_list.
+ */
+static void save_cid_attachment(struct Body *body, struct CidMapList *cid_map_list)
+{
+  if (!body || !cid_map_list)
+    return;
+
+  char *id = mutt_param_get(&body->parameter, "content-id");
+  struct Buffer *tmpfile = mutt_buffer_pool_get();
+  struct Buffer *cid = mutt_buffer_pool_get();
+  bool has_tempfile = false;
+  FILE *fp = NULL;
+
+  if (id)
+  {
+    /* Get filename */
+    char *fname = mutt_str_dup(body->filename);
+    if (body->aptr)
+    {
+      fp = body->aptr->fp;
+    }
+    mutt_file_sanitize_filename(fname, fp ? true : false);
+    mailcap_expand_filename("%s", fname, tmpfile);
+    FREE(&fname);
+
+    /* Save attachment */
+    if (mutt_save_attachment(fp, body, mutt_buffer_string(tmpfile), 0, NULL) == -1)
+      goto bail;
+    has_tempfile = true;
+
+    /* Add Content-ID to filename mapping to list */
+    struct CidMap *cid_map = mutt_mem_malloc(sizeof(struct CidMap));
+    mutt_buffer_printf(cid, "cid:%s", id);
+    cid_map->cid = mutt_str_dup(mutt_buffer_string(cid));
+    cid_map->fname = mutt_str_dup(mutt_buffer_string(tmpfile));
+    STAILQ_INSERT_TAIL(cid_map_list, cid_map, entries);
+  }
+
+bail:
+
+  if ((fp && !mutt_buffer_is_empty(tmpfile)) || has_tempfile)
+    mutt_add_temp_attachment(mutt_buffer_string(tmpfile));
+  mutt_buffer_pool_release(&tmpfile);
+  mutt_buffer_pool_release(&cid);
+}
+
+/**
+ * save_cid_attachments - Save all attachments in a "multipart/related" group with a Content-ID
+ * @param[in]  body         First body in "multipart/related" group
+ * @param[out] cid_map_list List of Content-ID to filename mappings
+ */
+static void save_cid_attachments(struct Body *body, struct CidMapList *cid_map_list)
+{
+  if (!body || !cid_map_list)
+    return;
+
+  for (struct Body *b = body; b; b = b->next)
+  {
+    if (b->parts)
+      save_cid_attachments(b->parts, cid_map_list);
+    else
+      save_cid_attachment(b, cid_map_list);
   }
 }
 
